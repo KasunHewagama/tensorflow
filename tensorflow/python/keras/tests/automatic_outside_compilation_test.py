@@ -32,6 +32,7 @@ from tensorflow.python.distribute.cluster_resolver import tpu_cluster_resolver
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
 from tensorflow.python.eager import remote
+from tensorflow.python.framework import ops
 from tensorflow.python.keras import callbacks
 from tensorflow.python.keras import initializers
 from tensorflow.python.keras.distribute import distribute_strategy_test
@@ -275,4 +276,5 @@ class AutoOutsideCompilationWithKerasTest(test.TestCase):
 
 
 if __name__ == '__main__':
+  ops.enable_eager_execution()
   test.main()

@@ -25,6 +25,7 @@ from tensorflow.python.distribute import combinations
 from tensorflow.python.distribute import strategy_combinations
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import def_function
+from tensorflow.python.framework import ops
 from tensorflow.python.keras.optimizer_v2 import adam
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import variables as variables_lib
@@ -136,4 +137,5 @@ class TrainingCheckpointTests(test.TestCase, parameterized.TestCase):
 
 
 if __name__ == "__main__":
+  ops.enable_eager_execution()
   test.main()

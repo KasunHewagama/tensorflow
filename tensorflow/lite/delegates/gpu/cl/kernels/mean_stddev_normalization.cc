@@ -45,19 +45,30 @@ std::string GetReduceCode() {
 #endif
 
 #ifdef __opencl_c_work_group_collective_functions
-#define local_reduce(input, tmp) work_group_reduce_add(input)
+#define local_reduce(item, tmp) work_group_reduce_add(item)
 #else  // !defined(__opencl_c_work_group_collective_functions)
-static inline float local_reduce(float input, __local float* tmp) {
+static inline float local_reduce(float item, __local float* tmp) {
   const int local_id = get_local_id(0);
-  tmp[local_id] = input;
+  tmp[local_id] = item;
   barrier(CLK_LOCAL_MEM_FENCE);
-  int reduction_size = get_local_size(0) / 2;
-  while (reduction_size > 0) {
-    if (local_id < reduction_size) {
-      tmp[local_id] += tmp[local_id + reduction_size];
+  // The number of items still need to be summed
+  int reduction_size = get_local_size(0);
+  while (reduction_size > 1) {
+    // Reduction step: add upper half of the still-to-be-summed vector to the
+    // lower half, while taking care of odd sizes and rounding. E.g.:
+    // Number of items still to be summed before: 5
+    // Local memory before: [a, b, c, d, e];
+    // Local memory after: [a+d, b+e, c, d, e];
+    // Threads doing work: id < 2 = floor(5/2)
+    // Offset to the added items: 3 = ceil(5/2)
+    // Number of items still to be summed after: 3 = ceil(5/2)
+    const int active_thread_limit = reduction_size / 2;
+    const int offset = (reduction_size + 1) / 2;
+    if (local_id < active_thread_limit) {
+      tmp[local_id] += tmp[local_id + offset];
     }
     barrier(CLK_LOCAL_MEM_FENCE);
-    reduction_size /=  2;
+    reduction_size = offset;
   }
   return tmp[0];
 }
@@ -75,13 +86,23 @@ static inline float4 filter_outside_tensor(float4 x, int num_channels, int slice
 }  // namespace
 
 MeanStdDevNormalization::MeanStdDevNormalization(const OperationDef& definition,
-                                                 const DeviceInfo& device_info)
+                                                 const DeviceInfo& device_info,
+                                                 const int tensor_slices)
     : GPUOperation(definition) {
   // The kernel code does not inherently need a fixed size, but in order to not
   // hardcode the __local array's size for the reductions, we would need to pass
   // that size to the kernel at runtime, and that is currently not supported.
-  // For now, fix workgroup size to 128 threads.
-  work_group_size_.x = 128;
+  // For now, fix workgroup size to the biggest supported by the device, but not
+  // larger than the number of tensor slices.
+  int desired_work_group_size =
+      std::min(tensor_slices, device_info.max_work_group_size_x);
+  if (device_info.IsMali() && desired_work_group_size > 64) {
+    // Don't use more than 64 work items per work group on ARM Mali. They
+    // implement local memory using the global memory, larger workgroups have
+    // severe performance penalty.
+    desired_work_group_size = 64;
+  }
+  work_group_size_.x = desired_work_group_size;
   work_group_size_.y = 1;  // Required
   work_group_size_.z = 1;  // Required
   code_ = GetNormalizationCode();
@@ -154,8 +175,9 @@ int3 MeanStdDevNormalization::GetGridSize() const {
 }
 
 MeanStdDevNormalization CreateMeanStdDevNormalization(
-    const OperationDef& definition, const DeviceInfo& device_info) {
-  return MeanStdDevNormalization(definition, device_info);
+    const OperationDef& definition, const DeviceInfo& device_info,
+    const int tensor_slices) {
+  return MeanStdDevNormalization(definition, device_info, tensor_slices);
 }
 
 }  // namespace cl
